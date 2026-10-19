@@ -152,12 +152,12 @@ table.bd tr.total td{font-weight:700;border-top:2px solid var(--border);}
     <h1>Quản lý dân cư</h1>
     <p>Khu phố • Nhập mã PIN để đăng nhập</p>
     <div class="pin-wrap login">
-      <input id="pinInput" class="pin-input" type="password" inputmode="numeric" maxlength="" placeholder="••••">
+      <input id="pinInput" class="pin-input" type="password" inputmode="numeric" maxlength="8" placeholder="••••">
       <button type="button" class="eye-btn" onclick="toggleEye('pinInput', this)">👁</button>
     </div>
     <div class="login-err" id="loginErr"></div>
     <button class="btn btn-primary" onclick="doLogin()">Đăng nhập</button>
-    <div class="demo-hint"></div>
+    <div class="demo-hint">Bản thử nghiệm — mã PIN demo:<br>1111 (Bí thư) · 2222 (Trưởng khu phố) · 3333 (Trưởng Ban CTMT)</div>
   </div>
 </div>
 
@@ -446,7 +446,7 @@ const USER_ROLES = [
   {role:'mattran', name:'Trưởng Ban công tác Mặt trận khu phố', canEdit:false},
 ];
 const DEFAULT_PINS = {bithu:'1111', truongkp:'2222', mattran:'3333'};
-const SYNC_URL_PASSWORD = 'khupho2026'; // Có thể thay chuỗi này; đây chỉ là khóa giao diện, không phải bảo mật máy chủ
+const SYNC_URL_PASSWORD = 'khuphosync2026'; // Có thể thay chuỗi này; đây chỉ là khóa giao diện, không phải bảo mật máy chủ
 let FORCE_PIN_CHANGE = false;
 
 function loadData(){
@@ -1415,7 +1415,7 @@ function renderDotDetail(){
           <div class="meta">Mã hộ: ${esc(h.maHo)}${rec?' • Ngày đóng: '+esc(rec.ngayDong):''}</div>
         </div>
       </div>
-      ${paid?`<div class="actions"><button class="btn-sm" onclick="inPhieuThu('${dot.id}','${h.maHo}')">In phiếu thu</button></div>`:''}
+      ${paid?`<div class="actions"><button class="btn-sm" onclick="inPhieuThu('${dot.id}','${h.maHo}')">In phiếu thu</button><button class="btn-sm" onclick="guiPhieuThuZalo('${dot.id}','${h.maHo}')">Gửi qua Zalo</button></div>`:''}
     </div>`;
   }).join('');
 }
@@ -1490,6 +1490,36 @@ function inPhieuThu(dotId, maHo){
     </body></html>`);
   w.document.close();
 }
+function guiPhieuThuZalo(dotId, maHo){
+  const dot = DATA.dotThu.find(d=>d.id===dotId);
+  const h = DATA.households.find(x=>x.maHo===maHo);
+  const rec = DATA.thanhToan.find(p=>p.dotId===dotId && p.maHo===maHo);
+  if(!dot || !h || !rec){ alert('Không tìm thấy đầy đủ thông tin đợt thu, hộ dân hoặc ngày thanh toán.'); return; }
+
+  // Giữ nguyên chức năng in hiện có; đây là luồng riêng để chuẩn bị PDF gửi Zalo.
+  const w = window.open('', '_blank');
+  if(!w){ alert('Trình duyệt đã chặn cửa sổ phiếu thu. Hãy cho phép cửa sổ bật lên (pop-up) rồi thử lại.'); return; }
+  const rows = (dot.khoanList||[]).map(k=>`<tr><td>${esc(k.ten)}</td><td class="money">${fmtTien(k.soTien)}</td></tr>`).join('');
+  const total = fmtTien(dotTong(dot));
+  const tenDot = esc(dot.tenDot);
+  const tenHo = esc(h.chuHo);
+  const maHoSafe = esc(h.maHo);
+  const diaChi = esc(h.diaChi||'');
+  const ngayDong = esc(rec.ngayDong||'');
+  w.document.open();
+  w.document.write(`<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Phieu_thu_${maHoSafe}</title>
+  <style>
+    *{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#172b3a;margin:0;background:#eef2f6}.toolbar{position:sticky;top:0;background:#123b5a;color:#fff;padding:12px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}.toolbar button,.toolbar a{border:1px solid #d6e2ed;border-radius:7px;padding:10px 14px;font-size:14px;cursor:pointer;text-decoration:none;background:#fff;color:#123b5a}.toolbar .hint{font-size:12px;opacity:.9;flex-basis:100%;line-height:1.5}.paper{max-width:800px;margin:24px auto;background:#fff;padding:42px;box-shadow:0 2px 12px #0001}.org{text-align:center;font-size:13px;color:#526579}.paper h1{text-align:center;font-size:24px;letter-spacing:1px;margin:10px 0 4px}.subtitle{text-align:center;color:#526579;margin-bottom:28px}.details p{margin:9px 0}.details b{display:inline-block;min-width:125px}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{padding:11px 8px;border-bottom:1px solid #d7e0e8;text-align:left}th{background:#f0f4f8}.money{text-align:right;white-space:nowrap}.total td{font-weight:bold;border-top:2px solid #123b5a}.signatures{display:flex;justify-content:space-between;gap:24px;margin-top:54px;text-align:center}.signatures>div{width:48%}.muted{color:#607286;font-size:12px}@media print{body{background:#fff}.toolbar{display:none}.paper{margin:0 auto;padding:18mm;max-width:none;box-shadow:none}.muted{color:#333}}
+  </style></head><body>
+  <div class="toolbar"><button onclick="window.print()">Lưu thành PDF / In</button><a href="https://chat.zalo.me/" target="_blank" rel="noopener">Mở Zalo Web</a><span class="hint">Bước 1: Chọn “Lưu thành PDF / In”, trong hộp thoại máy in chọn “Save as PDF / Lưu dưới dạng PDF” và lưu tệp. Bước 2: Mở Zalo, chọn đúng người nhận, đính kèm tệp PDF vừa lưu và bấm gửi.</span></div>
+  <main class="paper"><div class="org">PHIẾU THU ĐÓNG GÓP KHU PHỐ</div><h1>PHIẾU THU</h1><div class="subtitle">Đợt thu: ${tenDot}</div>
+  <div class="details"><p><b>Hộ nộp:</b> ${tenHo}</p><p><b>Mã hộ:</b> ${maHoSafe}</p><p><b>Địa chỉ:</b> ${diaChi||'—'}</p><p><b>Ngày đóng:</b> ${ngayDong||'—'}</p><p><b>Trạng thái:</b> Đã ghi nhận thanh toán</p></div>
+  <table><thead><tr><th>Nội dung khoản thu</th><th class="money">Số tiền</th></tr></thead><tbody>${rows}<tr class="total"><td>Tổng cộng</td><td class="money">${total}</td></tr></tbody></table>
+  <p class="muted">Phiếu được lập từ dữ liệu của ứng dụng Quản lý dân cư. Vui lòng kiểm tra thông tin trước khi gửi.</p>
+  <div class="signatures"><div>Người nộp tiền<br><br><br>_____________________</div><div>Người thu tiền<br><br><br>_____________________</div></div></main></body></html>`);
+  w.document.close();
+}
+
 function exportDotSummary(){
   const rows = DATA.dotThu.map((d,i)=>{
     const s = dotStats(d);
