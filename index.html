@@ -394,7 +394,7 @@ table.bd tr.total td{font-weight:700;border-top:2px solid var(--border);}
 </div>
 
 <!-- ============ FORM THÊM/SỬA ============ -->
-<div id="pinOverlay" class="overlay hidden" onclick="if(event.target===this)closeDoiPinOverlay()">
+<div id="pinOverlay" class="overlay hidden" onclick="if(event.target===this && !FORCE_PIN_CHANGE)closeDoiPinOverlay()">
   <div class="panel">
     <h3>Đổi mã PIN</h3>
     <div class="stat-label" style="margin-bottom:10px;">Đổi PIN đăng nhập của vai trò đang dùng: <b id="pinVaiTro"></b></div>
@@ -406,7 +406,7 @@ table.bd tr.total td{font-weight:700;border-top:2px solid var(--border);}
     </div>
     <div class="stat-label" id="pinMsg" style="margin-bottom:12px;"></div>
     <div class="panel-actions">
-      <button class="btn btn-cancel" onclick="closeDoiPinOverlay()">Hủy</button>
+      <button id="btnCancelPin" class="btn btn-cancel" onclick="closeDoiPinOverlay()">Hủy</button>
       <button class="btn btn-primary" onclick="doDoiPin()">Đổi PIN</button>
     </div>
   </div>
@@ -446,7 +446,8 @@ const USER_ROLES = [
   {role:'mattran', name:'Trưởng Ban công tác Mặt trận khu phố', canEdit:false},
 ];
 const DEFAULT_PINS = {bithu:'1111', truongkp:'2222', mattran:'3333'};
-const SYNC_URL_PASSWORD = 'khuphosync2026'; // đổi trực tiếp chuỗi này trong code nếu muốn đặt lại
+const SYNC_URL_PASSWORD = 'khuphosync2026'; // Có thể thay chuỗi này; đây chỉ là khóa giao diện, không phải bảo mật máy chủ
+let FORCE_PIN_CHANGE = false;
 
 function loadData(){
   let d = null;
@@ -458,7 +459,8 @@ function loadData(){
 }
 function migrate(d){
   ['households','residents','dotThu','thanhToan','cases','bienDong','queue','users','residentsArchive'].forEach(k=>{ if(!Array.isArray(d[k])) d[k]=[]; });
-  if(!d.users.length) d.users = USER_ROLES.map(r=>({id:r.role, pin:DEFAULT_PINS[r.role], updatedAt:0}));
+  if(!d.users.length) d.users = USER_ROLES.map(r=>({id:r.role, pin:DEFAULT_PINS[r.role], mustChangePin:false, updatedAt:0}));
+  d.users.forEach(u=>{ if(u.mustChangePin===undefined) u.mustChangePin=false; });
   d.residentsArchive.forEach(x=>{ if(x.updatedAt==null) x.updatedAt=0; });
   delete d.collections;
   ['households','residents','dotThu','thanhToan','cases','bienDong'].forEach(k=>d[k].forEach(x=>{ if(x.updatedAt==null) x.updatedAt=0; }));
@@ -508,24 +510,37 @@ function uid(){ return 'x'+Date.now().toString(36)+Math.random().toString(36).sl
 let SESSION = null;
 try{ SESSION = JSON.parse(sessionStorage.getItem('qldc_session')||'null'); }catch(e){}
 
-function doLogin(){
+async function doLogin(){
   const pin = document.getElementById('pinInput').value.trim();
-  const acc = DATA.users.find(u=>u.pin===pin);
   const err = document.getElementById('loginErr');
-  if(!acc){ err.textContent = 'Mã PIN không đúng.'; return; }
+  let acc = DATA.users.find(u=>u.pin===pin);
+  // Nếu PIN vừa được cấp lại ở máy chủ nhưng thiết bị này còn giữ dữ liệu cũ,
+  // tải dữ liệu mới trước khi kết luận PIN sai. Không đẩy hàng đợi cũ ở bước này.
+  if(!acc && DATA.syncUrl && navigator.onLine !== false){
+    err.textContent = 'Đang kiểm tra PIN mới từ máy chủ...';
+    try { await pullInternal(); saveData(); acc = DATA.users.find(u=>u.pin===pin); }
+    catch(e) { /* Nếu máy chủ không kết nối được, báo PIN sai bên dưới và vẫn giữ dữ liệu cục bộ. */ }
+  }
+  if(!acc){ err.textContent = 'Mã PIN không đúng hoặc chưa đồng bộ được PIN mới. Hãy kiểm tra mạng và thử lại.'; return; }
   const meta = USER_ROLES.find(r=>r.role===acc.id);
+  if(!meta){ err.textContent = 'Tài khoản không hợp lệ. Liên hệ quản trị viên.'; return; }
   err.textContent='';
   SESSION = {role:acc.id, name:meta.name, canEdit:meta.canEdit};
+  FORCE_PIN_CHANGE = !!acc.mustChangePin;
   sessionStorage.setItem('qldc_session', JSON.stringify(SESSION));
   enterApp();
+  if(FORCE_PIN_CHANGE) openDoiPinOverlay();
 }
 function openDoiPinOverlay(){
   document.getElementById('pinVaiTro').textContent = SESSION.name;
   document.getElementById('pin-cu').value=''; document.getElementById('pin-moi').value='';
   document.getElementById('pinMsg').textContent='';
+  document.getElementById('btnCancelPin').classList.toggle('hidden', FORCE_PIN_CHANGE);
+  if(FORCE_PIN_CHANGE) document.getElementById('pinMsg').textContent='PIN vừa được cấp lại. Bạn phải đổi PIN tạm thời trước khi tiếp tục.';
   document.getElementById('pinOverlay').classList.remove('hidden');
 }
 function closeDoiPinOverlay(){
+  if(FORCE_PIN_CHANGE){ document.getElementById('pinMsg').textContent='Bạn phải đổi PIN tạm thời trước khi tiếp tục.'; return; }
   document.getElementById('pinOverlay').classList.add('hidden');
 }
 function doDoiPin(){
@@ -535,11 +550,12 @@ function doDoiPin(){
   if(!acc || acc.pin!==cu){ msgEl.style.color='var(--accent-red)'; msgEl.textContent='PIN hiện tại không đúng.'; return; }
   if(!moi || moi.length<4){ msgEl.style.color='var(--accent-red)'; msgEl.textContent='PIN mới cần ít nhất 4 ký tự.'; return; }
   if(DATA.users.some(u=>u.id!==SESSION.role && u.pin===moi)){ msgEl.style.color='var(--accent-red)'; msgEl.textContent='PIN mới trùng với vai trò khác, chọn PIN khác.'; return; }
-  acc.pin = moi; acc.updatedAt = Date.now();
+  acc.pin = moi; acc.mustChangePin = false; acc.updatedAt = Date.now();
   queueChange('user', acc);
   saveData();
   document.getElementById('pin-cu').value=''; document.getElementById('pin-moi').value='';
-  msgEl.style.color='var(--accent-green)'; msgEl.textContent='Đã đổi PIN thành công.';
+  msgEl.style.color='var(--accent-green)'; msgEl.textContent='Đã đổi PIN thành công. PIN mới sẽ được đồng bộ lên Google Sheets.';
+  FORCE_PIN_CHANGE = false;
   setTimeout(closeDoiPinOverlay, 900);
 }
 function toggleEye(inputId, btn){
